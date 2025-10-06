@@ -1,0 +1,488 @@
+# Supabase RPC Functions Contract v1.0.0
+# Project: Second Opinion n8n Application
+# Description: RPC function specifications for n8n workflows to call via Supabase REST API
+
+version: "1.0.0"
+database: "PostgreSQL 15+ (Supabase)"
+access_mode: "service_role key (bypasses RLS)"
+rls_note: "RLS policies enforced for anon/authenticated keys, bypassed for service_role"
+
+functions:
+  - name: create_user_with_profile
+    description: "Atomically create user and empty profile in single transaction"
+    type: "FUNCTION"
+    returns: "UUID (user_id)"
+    security: "SECURITY DEFINER"
+    parameters:
+      - name: p_telegram_user_id
+        type: BIGINT
+        required: true
+        description: "Telegram user ID from Telegram API"
+      - name: p_consent_given
+        type: BOOLEAN
+        required: true
+        description: "User consent for data processing"
+    logic: |
+      BEGIN
+        INSERT INTO users (telegram_user_id, consent_given, account_status)
+        VALUES (p_telegram_user_id, p_consent_given, 'active')
+        RETURNING id INTO v_user_id;
+
+        INSERT INTO user_profiles (user_id)
+        VALUES (v_user_id);
+
+        RETURN v_user_id;
+      END;
+    error_handling:
+      - error: "duplicate_telegram_user_id"
+        code: "23505"
+        action: "Return existing user_id instead of raising error"
+      - error: "transaction_failure"
+        action: "Rollback both inserts, raise exception"
+    audit_log: true
+    example_call:
+      url: "POST https://<project>.supabase.co/rest/v1/rpc/create_user_with_profile"
+      headers:
+        apikey: "service_role_key"
+        Authorization: "Bearer service_role_key"
+        Content-Type: "application/json"
+      body: |
+        {
+          "p_telegram_user_id": 123456789,
+          "p_consent_given": true
+        }
+      response: |
+        {
+          "user_id": "550e8400-e29b-41d4-a716-446655440000"
+        }
+
+  - name: get_user_by_telegram_id
+    description: "Retrieve user record by Telegram user ID"
+    type: "FUNCTION"
+    returns: "TABLE (id UUID, telegram_user_id BIGINT, consent_given BOOLEAN, account_status TEXT)"
+    security: "SECURITY DEFINER"
+    parameters:
+      - name: p_telegram_user_id
+        type: BIGINT
+        required: true
+    logic: |
+      SELECT id, telegram_user_id, consent_given, account_status
+      FROM users
+      WHERE telegram_user_id = p_telegram_user_id
+      AND deleted_at IS NULL;
+    error_handling:
+      - error: "user_not_found"
+        action: "Return empty result set (not an error)"
+    audit_log: false
+    example_call:
+      url: "POST https://<project>.supabase.co/rest/v1/rpc/get_user_by_telegram_id"
+      body: |
+        {
+          "p_telegram_user_id": 123456789
+        }
+      response: |
+        [
+          {
+            "id": "550e8400-e29b-41d4-a716-446655440000",
+            "telegram_user_id": 123456789,
+            "consent_given": true,
+            "account_status": "active"
+          }
+        ]
+
+  - name: get_user_profile
+    description: "Retrieve user profile by user_id"
+    type: "FUNCTION"
+    returns: "TABLE (age INTEGER, biological_sex TEXT, height_cm INTEGER, weight_kg NUMERIC, medical_history JSONB, current_medications JSONB)"
+    security: "SECURITY DEFINER"
+    parameters:
+      - name: p_user_id
+        type: UUID
+        required: true
+    logic: |
+      SELECT age, biological_sex, height_cm, weight_kg, medical_history, current_medications
+      FROM user_profiles
+      WHERE user_id = p_user_id;
+    error_handling:
+      - error: "profile_not_found"
+        action: "Return empty result set"
+    audit_log: false
+    example_call:
+      url: "POST https://<project>.supabase.co/rest/v1/rpc/get_user_profile"
+      body: |
+        {
+          "p_user_id": "550e8400-e29b-41d4-a716-446655440000"
+        }
+      response: |
+        [
+          {
+            "age": 35,
+            "biological_sex": "male",
+            "height_cm": 180,
+            "weight_kg": 75.0,
+            "medical_history": [],
+            "current_medications": []
+          }
+        ]
+
+  - name: create_session
+    description: "Create new consultation session for user"
+    type: "FUNCTION"
+    returns: "UUID (session_id)"
+    security: "SECURITY DEFINER"
+    parameters:
+      - name: p_user_id
+        type: UUID
+        required: true
+      - name: p_session_status
+        type: TEXT
+        required: true
+        default: "active"
+        validation: "CHECK IN ('active', 'completed', 'abandoned')"
+    logic: |
+      INSERT INTO sessions (user_id, session_status)
+      VALUES (p_user_id, p_session_status)
+      RETURNING id;
+    error_handling:
+      - error: "user_not_found"
+        code: "23503"
+        action: "Raise foreign key violation exception"
+    audit_log: true
+    example_call:
+      url: "POST https://<project>.supabase.co/rest/v1/rpc/create_session"
+      body: |
+        {
+          "p_user_id": "550e8400-e29b-41d4-a716-446655440000",
+          "p_session_status": "active"
+        }
+      response: |
+        {
+          "session_id": "660e8400-e29b-41d4-a716-446655440001"
+        }
+
+  - name: get_active_session
+    description: "Retrieve active session for user (most recent)"
+    type: "FUNCTION"
+    returns: "UUID (session_id)"
+    security: "SECURITY DEFINER"
+    parameters:
+      - name: p_user_id
+        type: UUID
+        required: true
+    logic: |
+      SELECT id
+      FROM sessions
+      WHERE user_id = p_user_id
+      AND session_status = 'active'
+      ORDER BY created_at DESC
+      LIMIT 1;
+    error_handling:
+      - error: "no_active_session"
+        action: "Return NULL (n8n workflow will create new session)"
+    audit_log: false
+    example_call:
+      url: "POST https://<project>.supabase.co/rest/v1/rpc/get_active_session"
+      body: |
+        {
+          "p_user_id": "550e8400-e29b-41d4-a716-446655440000"
+        }
+      response: |
+        {
+          "session_id": "660e8400-e29b-41d4-a716-446655440001"
+        }
+
+  - name: insert_message
+    description: "Insert message with idempotency check (UNIQUE constraint on telegram_message_id + telegram_user_id)"
+    type: "FUNCTION"
+    returns: "UUID (message_id)"
+    security: "SECURITY DEFINER"
+    parameters:
+      - name: p_session_id
+        type: UUID
+        required: true
+      - name: p_telegram_message_id
+        type: BIGINT
+        required: true
+      - name: p_telegram_user_id
+        type: BIGINT
+        required: true
+      - name: p_direction
+        type: TEXT
+        required: true
+        validation: "CHECK IN ('inbound', 'outbound')"
+      - name: p_content
+        type: TEXT
+        required: true
+    logic: |
+      INSERT INTO messages (session_id, telegram_message_id, telegram_user_id, direction, content)
+      VALUES (p_session_id, p_telegram_message_id, p_telegram_user_id, p_direction, p_content)
+      ON CONFLICT (telegram_message_id, telegram_user_id) DO NOTHING
+      RETURNING id;
+    error_handling:
+      - error: "duplicate_message"
+        code: "23505"
+        action: "ON CONFLICT DO NOTHING (idempotency)"
+    audit_log: true
+    example_call:
+      url: "POST https://<project>.supabase.co/rest/v1/rpc/insert_message"
+      body: |
+        {
+          "p_session_id": "660e8400-e29b-41d4-a716-446655440001",
+          "p_telegram_message_id": 987654321,
+          "p_telegram_user_id": 123456789,
+          "p_direction": "inbound",
+          "p_content": "У меня болит голова"
+        }
+      response: |
+        {
+          "message_id": "770e8400-e29b-41d4-a716-446655440002"
+        }
+
+  - name: get_cached_response
+    description: "Retrieve cached AI response for duplicate message (idempotency)"
+    type: "FUNCTION"
+    returns: "TABLE (response_data JSONB, confidence NUMERIC)"
+    security: "SECURITY DEFINER"
+    parameters:
+      - name: p_telegram_message_id
+        type: BIGINT
+        required: true
+      - name: p_telegram_user_id
+        type: BIGINT
+        required: true
+    logic: |
+      SELECT ar.response_data, ar.confidence
+      FROM ai_responses ar
+      JOIN messages m ON ar.message_id = m.id
+      WHERE m.telegram_message_id = p_telegram_message_id
+      AND m.telegram_user_id = p_telegram_user_id
+      LIMIT 1;
+    error_handling:
+      - error: "no_cached_response"
+        action: "Return empty result set (proceed with new LLM call)"
+    audit_log: false
+    example_call:
+      url: "POST https://<project>.supabase.co/rest/v1/rpc/get_cached_response"
+      body: |
+        {
+          "p_telegram_message_id": 987654321,
+          "p_telegram_user_id": 123456789
+        }
+      response: |
+        [
+          {
+            "response_data": {...},
+            "confidence": 0.85
+          }
+        ]
+
+  - name: insert_ai_response
+    description: "Insert validated AI response linked to message and session"
+    type: "FUNCTION"
+    returns: "UUID (ai_response_id)"
+    security: "SECURITY DEFINER"
+    parameters:
+      - name: p_session_id
+        type: UUID
+        required: true
+      - name: p_message_id
+        type: UUID
+        required: true
+      - name: p_schema_version
+        type: TEXT
+        required: true
+        default: "v1"
+      - name: p_response_data
+        type: JSONB
+        required: true
+        description: "Pre-validated against airesponse.v1.schema.json"
+      - name: p_confidence
+        type: NUMERIC
+        required: true
+        validation: "CHECK BETWEEN 0 AND 1"
+    logic: |
+      INSERT INTO ai_responses (session_id, message_id, schema_version, response_data, confidence)
+      VALUES (p_session_id, p_message_id, p_schema_version, p_response_data, p_confidence)
+      RETURNING id;
+    error_handling:
+      - error: "invalid_confidence"
+        code: "23514"
+        action: "Raise CHECK constraint violation"
+    audit_log: true
+    example_call:
+      url: "POST https://<project>.supabase.co/rest/v1/rpc/insert_ai_response"
+      body: |
+        {
+          "p_session_id": "660e8400-e29b-41d4-a716-446655440001",
+          "p_message_id": "770e8400-e29b-41d4-a716-446655440002",
+          "p_schema_version": "v1",
+          "p_response_data": {
+            "summary": "...",
+            "red_flags": [],
+            "lifestyle": {...},
+            "self_care": {...},
+            "talk_to_doctor": {...},
+            "next_steps": [],
+            "confidence": 0.85,
+            "disclaimer": "..."
+          },
+          "p_confidence": 0.85
+        }
+      response: |
+        {
+          "ai_response_id": "880e8400-e29b-41d4-a716-446655440003"
+        }
+
+  - name: log_audit_event
+    description: "Insert audit log entry with correlation IDs"
+    type: "FUNCTION"
+    returns: "UUID (audit_log_id)"
+    security: "SECURITY DEFINER"
+    parameters:
+      - name: p_user_id
+        type: UUID
+        required: false
+      - name: p_session_id
+        type: UUID
+        required: false
+      - name: p_message_id
+        type: UUID
+        required: false
+      - name: p_operation_type
+        type: TEXT
+        required: true
+        examples: ["USER_CREATED", "CONSENT_GIVEN", "MESSAGE_RECEIVED", "AI_RESPONSE_GENERATED", "SCHEMA_VALIDATION_FAILED", "WORKFLOW_FAILED"]
+      - name: p_operation_status
+        type: TEXT
+        required: true
+        validation: "CHECK IN ('success', 'failure')"
+      - name: p_details
+        type: JSONB
+        required: false
+        default: "{}"
+    logic: |
+      INSERT INTO audit_logs (user_id, session_id, message_id, operation_type, operation_status, details)
+      VALUES (p_user_id, p_session_id, p_message_id, p_operation_type, p_operation_status, p_details)
+      RETURNING id;
+    error_handling: []
+    audit_log: false
+    pii_masking: true
+    example_call:
+      url: "POST https://<project>.supabase.co/rest/v1/rpc/log_audit_event"
+      body: |
+        {
+          "p_user_id": "550e8400-e29b-41d4-a716-446655440000",
+          "p_session_id": "660e8400-e29b-41d4-a716-446655440001",
+          "p_message_id": "770e8400-e29b-41d4-a716-446655440002",
+          "p_operation_type": "AI_RESPONSE_GENERATED",
+          "p_operation_status": "success",
+          "p_details": {"latency_ms": 5200}
+        }
+      response: |
+        {
+          "audit_log_id": "990e8400-e29b-41d4-a716-446655440004"
+        }
+
+  - name: insert_dlq_entry
+    description: "Insert failed workflow data into Dead Letter Queue"
+    type: "FUNCTION"
+    returns: "UUID (dlq_id)"
+    security: "SECURITY DEFINER"
+    parameters:
+      - name: p_workflow_name
+        type: TEXT
+        required: true
+        examples: ["recommendation-generate", "telegram-intake", "error-handler"]
+      - name: p_original_data
+        type: JSONB
+        required: true
+        description: "Original workflow input data for replay"
+      - name: p_failure_reason
+        type: TEXT
+        required: true
+      - name: p_retry_attempts
+        type: INTEGER
+        required: true
+        default: 3
+    logic: |
+      INSERT INTO dlq (workflow_name, original_data, failure_reason, retry_attempts)
+      VALUES (p_workflow_name, p_original_data, p_failure_reason, p_retry_attempts)
+      RETURNING id;
+    error_handling: []
+    audit_log: true
+    example_call:
+      url: "POST https://<project>.supabase.co/rest/v1/rpc/insert_dlq_entry"
+      body: |
+        {
+          "p_workflow_name": "recommendation-generate",
+          "p_original_data": {
+            "user_id": "550e8400-e29b-41d4-a716-446655440000",
+            "message_id": "770e8400-e29b-41d4-a716-446655440002"
+          },
+          "p_failure_reason": "Schema validation failed after 3 retries",
+          "p_retry_attempts": 3
+        }
+      response: |
+        {
+          "dlq_id": "aa0e8400-e29b-41d4-a716-446655440005"
+        }
+
+  - name: delete_user_data
+    description: "Soft-delete user and all associated data (GDPR compliance)"
+    type: "FUNCTION"
+    returns: "VOID"
+    security: "SECURITY DEFINER"
+    parameters:
+      - name: p_user_id
+        type: UUID
+        required: true
+    logic: |
+      UPDATE users
+      SET deleted_at = NOW(), account_status = 'deleted'
+      WHERE id = p_user_id;
+
+      -- Cascade soft-deletes handled by application logic or triggers
+    error_handling:
+      - error: "user_not_found"
+        action: "Silently succeed (idempotent)"
+    audit_log: true
+    example_call:
+      url: "POST https://<project>.supabase.co/rest/v1/rpc/delete_user_data"
+      body: |
+        {
+          "p_user_id": "550e8400-e29b-41d4-a716-446655440000"
+        }
+      response: "null"
+
+access_patterns:
+  - pattern: "n8n service_role access"
+    description: "All n8n workflows use service_role key to bypass RLS"
+    rationale: "Backend-first: n8n is trusted backend, RLS enforced for client access only"
+    security: "Service key never exposed to clients or logs"
+
+  - pattern: "User data scoping"
+    description: "All queries filter by user_id derived from telegram_user_id"
+    enforcement: "Application logic in n8n workflows + RLS policies"
+
+  - pattern: "PII isolation"
+    description: "PII (user_profiles) separated from identity (users)"
+    access: "Only via get_user_profile RPC, never direct table access"
+
+rls_bypass_justification: |
+  n8n workflows use service_role key to bypass RLS because:
+  1. Backend-first architecture: n8n is the trusted backend
+  2. RLS policies enforce user_id scoping for anon/authenticated client keys
+  3. n8n workflows implement application-level access control
+  4. Service key never leaves n8n credentials store
+
+migration_file: "supabase/migrations/009_create_functions.sql"
+testing: "tests/migration/test_rpc_functions.js"
+
+notes:
+  - "All RPC functions use SECURITY DEFINER to run with owner privileges"
+  - "Idempotency enforced via UNIQUE constraints and ON CONFLICT"
+  - "Audit logging for critical operations only (create, delete, mutate)"
+  - "PII masked in all audit log details"
+  - "Correlation IDs (user_id, session_id, message_id) propagated through all operations"
+  - "All RPC functions accessed via Supabase REST API from n8n HTTP Request nodes"
+  - "Russian language responses handled at application layer (n8n), not in RPC functions"

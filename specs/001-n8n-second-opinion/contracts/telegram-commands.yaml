@@ -1,0 +1,259 @@
+# Telegram Commands Contract v1.0.0
+# Project: Second Opinion n8n Application
+# Description: Command specifications with expected flow sequences and responses (all in Russian)
+
+version: "1.0.0"
+commands:
+  - command: /start
+    description: "Initiate session and user onboarding"
+    scope: "new_users"
+    flow_sequence:
+      - step: 1
+        action: "receive_command"
+        trigger: "User sends /start"
+      - step: 2
+        action: "check_existing_user"
+        workflow: "user-resolve-create"
+        logic: "Query users table by telegram_user_id"
+      - step: 3
+        action: "present_consent_prompt"
+        condition: "user_not_found OR consent_given=false"
+        response: |
+          Добро пожаловать в Second Opinion!
+
+          Для начала работы мне нужно ваше согласие на обработку медицинских данных.
+
+          Я буду:
+          - Собирать информацию о вашем здоровье
+          - Анализировать её с помощью ИИ
+          - Предоставлять рекомендации (не заменяющие визит к врачу)
+
+          Ваши данные защищены и не будут переданы третьим лицам.
+
+          [Принять] [Отклонить]
+      - step: 4
+        action: "handle_consent_response"
+        on_accept:
+          - "Update users.consent_given = true"
+          - "Trigger profile-enrich workflow"
+        on_decline:
+          - "Send: 'Без согласия я не могу работать с вашими данными. Если передумаете, отправьте /start снова.'"
+          - "End session"
+      - step: 5
+        action: "collect_profile"
+        workflow: "profile-enrich"
+        prompts:
+          - field: "age"
+            prompt: "Сколько вам лет?"
+            validation: "INTEGER, 0-150"
+          - field: "biological_sex"
+            prompt: "Ваш биологический пол? (мужской/женский/другое)"
+            validation: "ENUM"
+          - field: "height_cm"
+            prompt: "Ваш рост в сантиметрах?"
+            validation: "INTEGER, 50-300"
+          - field: "weight_kg"
+            prompt: "Ваш вес в килограммах?"
+            validation: "NUMERIC, 2-500"
+          - field: "medical_history"
+            prompt: "Есть ли у вас хронические заболевания? (если нет, напишите 'нет')"
+            validation: "TEXT"
+          - field: "current_medications"
+            prompt: "Принимаете ли вы сейчас какие-либо лекарства? (если нет, напишите 'нет')"
+            validation: "TEXT"
+      - step: 6
+        action: "confirm_profile_created"
+        response: |
+          Отлично! Профиль создан.
+
+          Теперь вы можете описать вашу проблему со здоровьем, и я дам рекомендации.
+
+          Команды:
+          /new - начать новую консультацию
+          /profile - посмотреть профиль
+          /help - справка
+    error_handling:
+      - error: "consent_timeout"
+        timeout: "300s"
+        response: "Время ожидания истекло. Отправьте /start для повторной попытки."
+      - error: "validation_failure"
+        response: "Некорректные данные. Попробуйте снова."
+
+  - command: /new
+    description: "Start new consultation session"
+    scope: "existing_users"
+    flow_sequence:
+      - step: 1
+        action: "receive_command"
+        trigger: "User sends /new"
+      - step: 2
+        action: "verify_user_exists"
+        workflow: "user-resolve-create"
+        on_not_found: "Redirect to /start"
+      - step: 3
+        action: "verify_profile_exists"
+        workflow: "profile-enrich"
+        on_not_found: "Trigger profile collection"
+      - step: 4
+        action: "create_new_session"
+        rpc: "create_session"
+        parameters:
+          user_id: "from users table"
+          session_status: "active"
+      - step: 5
+        action: "prompt_for_concern"
+        response: |
+          Новая консультация начата. О какой проблеме со здоровьем вы хотели бы поговорить?
+    error_handling:
+      - error: "user_not_found"
+        response: "Сначала отправьте /start для регистрации."
+      - error: "session_creation_failure"
+        response: "Не удалось начать сессию. Попробуйте снова."
+        route_to_dlq: true
+
+  - command: /profile
+    description: "View user profile with PII masking"
+    scope: "existing_users"
+    flow_sequence:
+      - step: 1
+        action: "receive_command"
+        trigger: "User sends /profile"
+      - step: 2
+        action: "fetch_profile"
+        rpc: "get_user_profile"
+        parameters:
+          user_id: "from users table by telegram_user_id"
+      - step: 3
+        action: "mask_pii"
+        masking_rules:
+          age: "Convert to range (e.g., 35 → '30-40')"
+          height_cm: "Convert to range (e.g., 180 → '170-180 см')"
+          weight_kg: "Convert to range (e.g., 75 → '70-80 кг')"
+          medical_history: "Show count or 'есть/нет', not details"
+          current_medications: "Show count or 'есть/нет', not details"
+      - step: 4
+        action: "display_profile"
+        response_template: |
+          Ваш профиль:
+          - Возраст: {age_range}
+          - Рост: {height_range}
+          - Вес: {weight_range}
+          - Хронические заболевания: {medical_history_status}
+          - Текущие препараты: {medications_status}
+
+          Для обновления профиля напишите /update_profile
+    error_handling:
+      - error: "profile_not_found"
+        response: "Профиль не найден. Отправьте /start для создания профиля."
+      - error: "fetch_failure"
+        response: "Не удалось загрузить профиль. Попробуйте позже."
+
+  - command: /help
+    description: "Display help text with all commands and disclaimer"
+    scope: "all_users"
+    flow_sequence:
+      - step: 1
+        action: "receive_command"
+        trigger: "User sends /help"
+      - step: 2
+        action: "display_help"
+        response: |
+          Second Opinion Bot - Ваш помощник по здоровью
+
+          Команды:
+          /start - Начать работу (новые пользователи)
+          /new - Начать новую консультацию
+          /profile - Посмотреть профиль здоровья
+          /help - Показать эту справку
+
+          Как использовать:
+          1. Начните с /new для новой консультации
+          2. Опишите вашу проблему со здоровьем своими словами
+          3. Получите структурированные рекомендации
+
+          ⚠️ Дисклеймер: Этот бот предоставляет только информационные рекомендации. Всегда консультируйтесь с квалифицированным врачом для диагностики и лечения.
+    error_handling: []
+
+idempotency:
+  key: "telegram_message_id + telegram_user_id"
+  strategy: "Return cached response for duplicate messageId"
+  cache_location: "messages table with UNIQUE constraint"
+
+general_text_message_flow:
+  description: "Handling free-text messages (not commands)"
+  flow_sequence:
+    - step: 1
+      action: "receive_message"
+      trigger: "User sends non-command text"
+    - step: 2
+      action: "check_idempotency"
+      logic: "Query messages by telegram_message_id + telegram_user_id"
+      on_duplicate: "Return cached ai_response"
+    - step: 3
+      action: "verify_active_session"
+      rpc: "get_active_session"
+      on_not_found: "Prompt: 'Начните с /new для новой консультации'"
+    - step: 4
+      action: "insert_message"
+      rpc: "insert_message"
+      parameters:
+        session_id: "from active session"
+        telegram_message_id: "from Telegram update"
+        telegram_user_id: "from Telegram update"
+        direction: "inbound"
+        content: "message text"
+    - step: 5
+      action: "generate_recommendation"
+      workflow: "recommendation-generate"
+      includes:
+        - "Fetch user profile"
+        - "Build prompt with profile context + schema + Russian instruction"
+        - "Call OpenAI API"
+        - "Validate against airesponse.v1.schema.json"
+        - "Retry on validation failure (max 3)"
+        - "Insert ai_response"
+    - step: 6
+      action: "send_response"
+      workflow: "response-send"
+      includes:
+        - "Format as Markdown for Telegram"
+        - "Send via Telegram sendMessage API"
+        - "Insert outbound message"
+        - "Log audit event"
+
+audit_logging:
+  events:
+    - event: "USER_CREATED"
+      triggers: "/start with consent accepted"
+    - event: "CONSENT_GIVEN"
+      triggers: "User accepts consent"
+    - event: "PROFILE_CREATED"
+      triggers: "Profile collection completed"
+    - event: "SESSION_STARTED"
+      triggers: "/new or first message"
+    - event: "MESSAGE_RECEIVED"
+      triggers: "Inbound message processed"
+    - event: "AI_RESPONSE_GENERATED"
+      triggers: "LLM response validated and persisted"
+    - event: "MESSAGE_SENT"
+      triggers: "Outbound message delivered"
+    - event: "SCHEMA_VALIDATION_FAILED"
+      triggers: "AI response validation failure"
+    - event: "WORKFLOW_FAILED"
+      triggers: "Error routed to DLQ"
+
+russian_language_requirements:
+  - "All user-facing messages MUST be in Russian"
+  - "All prompt responses MUST be in Russian"
+  - "All error messages MUST be in Russian"
+  - "LLM prompts MUST include: 'Отвечай исключительно на русском языке'"
+  - "Medical disclaimers MUST use Russian medical context"
+  - "Constitution Principle IX enforced"
+
+notes:
+  - "All workflows referenced here are n8n visual workflows in n8n-workflows/"
+  - "RPC functions defined in supabase-rpc.yaml"
+  - "JSON Schema validation in airesponse.v1.schema.json"
+  - "Idempotency prevents duplicate processing"
+  - "DLQ captures failures after 3 retry attempts"
+  - "Audit logs maintain correlation via user_id/session_id/message_id"

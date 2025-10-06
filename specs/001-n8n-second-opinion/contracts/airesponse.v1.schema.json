@@ -1,0 +1,131 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://secondopinion.app/schemas/airesponse.v1.schema.json",
+  "title": "AI Response Schema v1",
+  "description": "Structured medical recommendation output from LLM, validated before persistence",
+  "type": "object",
+  "required": [
+    "summary",
+    "red_flags",
+    "lifestyle",
+    "self_care",
+    "talk_to_doctor",
+    "next_steps",
+    "confidence",
+    "disclaimer"
+  ],
+  "properties": {
+    "summary": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 500,
+      "description": "Краткое резюме о проблеме пользователя и ключевых рекомендациях (на русском языке)"
+    },
+    "red_flags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 5,
+        "maxLength": 200
+      },
+      "minItems": 0,
+      "maxItems": 10,
+      "description": "Тревожные признаки, требующие немедленного обращения к врачу (на русском языке)"
+    },
+    "lifestyle": {
+      "type": "object",
+      "required": ["diet", "exercise", "sleep"],
+      "properties": {
+        "diet": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 300,
+          "description": "Рекомендации по питанию (на русском языке)"
+        },
+        "exercise": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 300,
+          "description": "Рекомендации по физической активности (на русском языке)"
+        },
+        "sleep": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 300,
+          "description": "Рекомендации по сну (на русском языке)"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Рекомендации по образу жизни"
+    },
+    "self_care": {
+      "type": "object",
+      "required": ["recommendations"],
+      "properties": {
+        "recommendations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 200
+          },
+          "minItems": 1,
+          "maxItems": 5,
+          "description": "Действия для самопомощи (на русском языке)"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Рекомендации по самопомощи"
+    },
+    "talk_to_doctor": {
+      "type": "object",
+      "required": ["topics"],
+      "properties": {
+        "topics": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 200
+          },
+          "minItems": 1,
+          "maxItems": 5,
+          "description": "Темы для обсуждения с врачом (на русском языке)"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Темы для профессиональной консультации"
+    },
+    "next_steps": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 10,
+        "maxLength": 200
+      },
+      "minItems": 1,
+      "maxItems": 2,
+      "description": "1-2 следующих шага для пользователя (на русском языке)"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Уровень уверенности AI в рекомендациях (0.0 = низкий, 1.0 = высокий)"
+    },
+    "disclaimer": {
+      "type": "string",
+      "minLength": 50,
+      "description": "Обязательный дисклеймер о необходимости профессиональной консультации (на русском языке)"
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uri"
+      },
+      "description": "Опционально: источники информации"
+    }
+  },
+  "additionalProperties": false
+}
