@@ -1,41 +1,21 @@
 <!--
 Sync Impact Report:
-Version change: 1.0.0 → 2.0.0
+Version change: 2.0.0 → 2.1.0
 List of modified principles:
-  - Backend-First: Expanded with detailed n8n integration patterns
-  - Медицинская Безопасность: Removed (project context changed)
-  - Test-First: Removed (replaced with data-contract-first approach)
-  - Структурированные Данные: Expanded into comprehensive "Data Contracts First"
-  - Наблюдаемость и Логирование: Expanded into "Observability and Audit"
+  - LLM Integration Rules: Updated to include mandatory Russian language instruction
 Added sections:
-  - Event-Driven Orchestration (n8n workflows)
-  - Supabase as Source of Truth
-  - Deterministic Integrations
-  - Security by Default
-  - Transparent Evolution
-  - Data Standards and Contracts (comprehensive)
-  - Quality, Security & Compliance
-  - LLM Integration Rules
-  - Telegram UX and Behavior
-  - n8n Mandatory Patterns
-  - Schema Migrations and Evolution
-  - SDD Workflow and Branching
-  - Prohibited Practices
-  - Metrics and Observability
-  - Constitution Amendment Procedure
-Removed sections:
-  - Медицинская Безопасность (replaced with domain-agnostic quality principles)
-  - Test-First (replaced with contract-first and validation)
+  - Language Standards and Localization (new principle IX)
+Removed sections: None
 Templates requiring updates:
-  ✅ plan-template.md (Constitution Check section aligns with new principles)
-  ✅ spec-template.md (Requirements align with data contracts)
-  ✅ tasks-template.md (Task categories reflect new patterns)
+  ✅ plan-template.md (Constitution Check section aligns with new language principle)
+  ✅ spec-template.md (Requirements should specify language for UI/content)
+  ✅ tasks-template.md (Tasks should include language validation checks)
 Follow-up TODOs: None
 -->
 
 # Second Opinion Constitution
 
-**Version**: 2.0.0
+**Version**: 2.1.0
 **Ratified**: 2025-10-06
 **Last Amended**: 2025-10-06
 
@@ -147,6 +127,41 @@ Follow-up TODOs: None
 
 **Rationale**: Transparent evolution ensures team alignment, prevents accidental breaking changes, and maintains project coherence.
 
+### IX. Language Standards and Localization
+
+**Principle**: Russian language is the primary interface language. All user-facing content MUST be in Russian. Technical implementation uses English conventions with Russian documentation.
+
+**Rules**:
+
+**User-Facing Content** (MUST be Russian):
+- All Telegram bot messages, commands, buttons, and instructions
+- AI-generated responses (summary, red_flags, lifestyle, self_care, talk_to_doctor, next_steps, disclaimer)
+- Error messages and user notifications
+- System prompts MUST include explicit instruction: "Отвечай исключительно на русском языке"
+- Medical disclaimers formatted for Russian medical context and mentality
+
+**Technical Implementation** (English with Russian documentation):
+- Variable names, function names, n8n workflow names in English (compatibility)
+- Code comments in n8n workflows and SQL schemas in Russian (team convenience)
+- System logs in English with Russian explanations where needed
+
+**Data Processing**:
+- User input accepted and processed in Russian
+- Text validation and normalization handles Cyrillic and Russian morphology
+- PostgreSQL full-text search configured for Russian language (russian configuration)
+- JSON Schema supports UTF-8 for correct Cyrillic storage
+
+**Quality Control**:
+- AI prompts include style instructions: "Используй медицинскую терминологию, понятную обычному пользователю"
+- Responses align with Russian cultural expectations regarding health
+- Testing includes validation of correct Russian language in AI outputs
+
+**Future Scalability**:
+- Architecture allows adding languages via `user.preferred_language` parameter
+- Current implementation optimized for Russian as primary language
+
+**Rationale**: Russian-first approach ensures cultural and linguistic appropriateness for target user base, while English technical conventions maintain compatibility with international tooling and libraries.
+
 ---
 
 ## Data Standards and Contracts
@@ -212,6 +227,7 @@ Follow-up TODOs: None
 - Contract tests for JSON Schema conformance
 - Migration tests (up/down, idempotency)
 - Idempotency tests for duplicate Telegram message handling
+- Language validation tests for Russian content correctness
 
 ### Load and Longevity Risks
 
@@ -230,6 +246,7 @@ LLM is a formatting and extraction tool. Source of truth is schemas and database
 ### Rules
 
 - Prompts constructed from code (n8n Function/Template) with strict JSON output instructions
+- All prompts MUST include language instruction: "Отвечай исключительно на русском языке"
 - Post-validation MANDATORY: response MUST match JSON Schema
 - Schema mismatch → retry with compressed context; exhaustion → DLQ
 - No "guessing" of identifiers or personal data; all from DB and intake
@@ -239,6 +256,8 @@ LLM is a formatting and extraction tool. Source of truth is schemas and database
 - Hardcoded prompt templates in n8n
 - Schema definition embedded in prompt
 - Clear instruction: "Output ONLY valid JSON matching schema X"
+- Explicit language instruction: "Отвечай исключительно на русском языке"
+- Style guidance: "Используй медицинскую терминологию, понятную обычному пользователю"
 
 ---
 
@@ -256,6 +275,7 @@ LLM is a formatting and extraction tool. Source of truth is schemas and database
 - Atomic responses with explicit reference to original messageId
 - No PII leakage
 - CTA hints during wait states
+- All messages in Russian
 
 ### Duplicate Handling
 
@@ -332,6 +352,7 @@ JSON Validate → Persist AI Response → Send Telegram → Error Handler
 2. Bypassing RLS or mixing PII with domain data
 3. Hidden schema/enum changes outside migrations and review
 4. Hardcoding secrets, logging PII, arbitrary retries without strategy
+5. Generating AI responses in languages other than Russian without explicit user preference
 
 ---
 
@@ -394,4 +415,4 @@ This constitution supersedes all other practices. In case of conflict, constitut
 
 ---
 
-*End of Constitution v2.0.0*
+*End of Constitution v2.1.0*

@@ -1,0 +1,131 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://secondopinion.app/schemas/airesponse.v1.schema.json",
+  "title": "AI Response Schema v1",
+  "description": "Structured medical recommendation output from LLM, validated before persistence",
+  "type": "object",
+  "required": [
+    "summary",
+    "red_flags",
+    "lifestyle",
+    "self_care",
+    "talk_to_doctor",
+    "next_steps",
+    "confidence",
+    "disclaimer"
+  ],
+  "properties": {
+    "summary": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 500,
+      "description": "Brief overview of user's health concern and key recommendations"
+    },
+    "red_flags": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 5,
+        "maxLength": 200
+      },
+      "minItems": 0,
+      "maxItems": 10,
+      "description": "Critical health concerns requiring immediate medical attention"
+    },
+    "lifestyle": {
+      "type": "object",
+      "required": ["diet", "exercise", "sleep"],
+      "properties": {
+        "diet": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 300,
+          "description": "Dietary recommendations related to health concern"
+        },
+        "exercise": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 300,
+          "description": "Physical activity recommendations"
+        },
+        "sleep": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 300,
+          "description": "Sleep hygiene recommendations"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Lifestyle modification suggestions"
+    },
+    "self_care": {
+      "type": "object",
+      "required": ["recommendations"],
+      "properties": {
+        "recommendations": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 10,
+            "maxLength": 200
+          },
+          "minItems": 1,
+          "maxItems": 5,
+          "description": "Actionable self-care steps user can take independently"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Self-care guidance for symptom management"
+    },
+    "talk_to_doctor": {
+      "type": "object",
+      "required": ["topics"],
+      "properties": {
+        "topics": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 200
+          },
+          "minItems": 1,
+          "maxItems": 5,
+          "description": "Specific questions or concerns to discuss with healthcare provider"
+        }
+      },
+      "additionalProperties": false,
+      "description": "Topics for professional medical consultation"
+    },
+    "next_steps": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 10,
+        "maxLength": 200
+      },
+      "minItems": 1,
+      "maxItems": 2,
+      "description": "1-2 immediate action items for user (e.g., 'Schedule doctor appointment', 'Monitor symptoms for 48 hours')"
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "AI confidence score for this recommendation (0.0 = low, 1.0 = high)"
+    },
+    "disclaimer": {
+      "type": "string",
+      "minLength": 50,
+      "description": "Mandatory medical disclaimer emphasizing need for professional consultation"
+    },
+    "sources": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "format": "uri"
+      },
+      "description": "Optional: References or sources used for recommendations"
+    }
+  },
+  "additionalProperties": false
+}

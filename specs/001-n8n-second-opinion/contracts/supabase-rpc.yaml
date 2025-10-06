@@ -1,0 +1,385 @@
+# Supabase RPC Functions Contract
+# Defines all stored procedures/functions callable from n8n workflows
+
+version: "1.0"
+database: "Supabase PostgreSQL 15+"
+
+functions:
+  - name: create_user_with_profile
+    description: "Atomic user + profile creation in single transaction"
+    security: service_role
+    parameters:
+      - name: p_telegram_user_id
+        type: bigint
+        required: true
+        description: "Telegram user ID from webhook"
+
+      - name: p_consent_given
+        type: boolean
+        required: true
+        description: "Whether user consented to data processing"
+
+      - name: p_age
+        type: integer
+        required: false
+        description: "User age (0-150)"
+
+      - name: p_biological_sex
+        type: text
+        required: false
+        description: "One of: male, female, other, prefer_not_to_say"
+
+      - name: p_height_cm
+        type: integer
+        required: false
+        description: "Height in cm (50-300)"
+
+      - name: p_weight_kg
+        type: numeric
+        required: false
+        description: "Weight in kg (2-500)"
+
+      - name: p_medical_history
+        type: jsonb
+        required: false
+        default: "[]"
+        description: "Array of medical conditions"
+
+      - name: p_current_medications
+        type: jsonb
+        required: false
+        default: "[]"
+        description: "Array of current medications"
+
+    returns:
+      type: uuid
+      description: "Newly created user_id"
+
+    behavior: |
+      BEGIN
+        INSERT INTO users (telegram_user_id, consent_given)
+        VALUES (p_telegram_user_id, p_consent_given)
+        RETURNING id INTO v_user_id;
+
+        INSERT INTO user_profiles (user_id, age, biological_sex, height_cm, weight_kg, medical_history, current_medications)
+        VALUES (v_user_id, p_age, p_biological_sex, p_height_cm, p_weight_kg, p_medical_history, p_current_medications);
+
+        INSERT INTO audit_logs (user_id, operation_type, operation_status, details)
+        VALUES (v_user_id, 'USER_CREATED', 'success', jsonb_build_object('telegram_user_id', p_telegram_user_id));
+
+        RETURN v_user_id;
+      END;
+
+    error_handling:
+      - constraint_violation: "Returns NULL if telegram_user_id already exists"
+      - validation_error: "Raises exception if age/height/weight out of range"
+
+  - name: get_user_by_telegram_id
+    description: "Resolve internal user_id from Telegram user ID"
+    security: service_role
+    parameters:
+      - name: p_telegram_user_id
+        type: bigint
+        required: true
+
+    returns:
+      type: TABLE(id UUID, telegram_user_id BIGINT, consent_given BOOLEAN, account_status TEXT, created_at TIMESTAMPTZ)
+      description: "User row or empty if not found"
+
+    behavior: |
+      RETURN QUERY
+      SELECT id, telegram_user_id, consent_given, account_status, created_at
+      FROM users
+      WHERE telegram_user_id = p_telegram_user_id
+      AND deleted_at IS NULL;
+
+    usage_note: "n8n calls this at start of every workflow to resolve user_id"
+
+  - name: get_user_profile
+    description: "Fetch user health profile"
+    security: service_role
+    parameters:
+      - name: p_user_id
+        type: uuid
+        required: true
+
+    returns:
+      type: TABLE(age INTEGER, biological_sex TEXT, height_cm INTEGER, weight_kg NUMERIC, medical_history JSONB, current_medications JSONB)
+      description: "User profile or empty if not found"
+
+    behavior: |
+      RETURN QUERY
+      SELECT age, biological_sex, height_cm, weight_kg, medical_history, current_medications
+      FROM user_profiles
+      WHERE user_id = p_user_id;
+
+    usage_note: "Used to build LLM prompt with user context"
+
+  - name: create_session
+    description: "Start new consultation session"
+    security: service_role
+    parameters:
+      - name: p_user_id
+        type: uuid
+        required: true
+
+    returns:
+      type: uuid
+      description: "Newly created session_id"
+
+    behavior: |
+      INSERT INTO sessions (user_id, session_status)
+      VALUES (p_user_id, 'active')
+      RETURNING id;
+
+    usage_note: "Called on /new command or first message in conversation"
+
+  - name: insert_message
+    description: "Insert user or bot message (with idempotency check)"
+    security: service_role
+    parameters:
+      - name: p_session_id
+        type: uuid
+        required: true
+
+      - name: p_telegram_message_id
+        type: bigint
+        required: true
+
+      - name: p_telegram_user_id
+        type: bigint
+        required: true
+
+      - name: p_direction
+        type: text
+        required: true
+        description: "Either 'inbound' or 'outbound'"
+
+      - name: p_content
+        type: text
+        required: true
+
+    returns:
+      type: uuid
+      description: "Message ID (new or existing if duplicate)"
+
+    behavior: |
+      INSERT INTO messages (session_id, telegram_message_id, telegram_user_id, direction, content)
+      VALUES (p_session_id, p_telegram_message_id, p_telegram_user_id, p_direction, p_content)
+      ON CONFLICT (telegram_message_id, telegram_user_id) DO NOTHING
+      RETURNING id;
+
+      -- If conflict (duplicate), return existing message_id
+      IF NOT FOUND THEN
+        SELECT id FROM messages
+        WHERE telegram_message_id = p_telegram_message_id
+        AND telegram_user_id = p_telegram_user_id;
+      END IF;
+
+    usage_note: "Enforces idempotency via unique constraint"
+
+  - name: insert_ai_response
+    description: "Persist validated AI response"
+    security: service_role
+    parameters:
+      - name: p_session_id
+        type: uuid
+        required: true
+
+      - name: p_message_id
+        type: uuid
+        required: true
+        description: "Inbound message that triggered this response"
+
+      - name: p_schema_version
+        type: text
+        required: true
+        default: "v1"
+
+      - name: p_response_data
+        type: jsonb
+        required: true
+        description: "Validated JSON matching airesponse.{version}.schema.json"
+
+      - name: p_confidence
+        type: numeric
+        required: true
+
+    returns:
+      type: uuid
+      description: "Newly created ai_response_id"
+
+    behavior: |
+      INSERT INTO ai_responses (session_id, message_id, schema_version, response_data, confidence)
+      VALUES (p_session_id, p_message_id, p_schema_version, p_response_data, p_confidence)
+      RETURNING id;
+
+    usage_note: "Called AFTER JSON Schema validation passes in n8n"
+
+  - name: get_cached_response
+    description: "Retrieve existing AI response for duplicate message"
+    security: service_role
+    parameters:
+      - name: p_telegram_message_id
+        type: bigint
+        required: true
+
+      - name: p_telegram_user_id
+        type: bigint
+        required: true
+
+    returns:
+      type: TABLE(response_data JSONB, confidence NUMERIC, created_at TIMESTAMPTZ)
+      description: "Cached AI response or empty if not found"
+
+    behavior: |
+      RETURN QUERY
+      SELECT ar.response_data, ar.confidence, ar.created_at
+      FROM ai_responses ar
+      JOIN messages m ON ar.message_id = m.id
+      WHERE m.telegram_message_id = p_telegram_message_id
+      AND m.telegram_user_id = p_telegram_user_id
+      LIMIT 1;
+
+    usage_note: "Called when duplicate message detected (idempotency)"
+
+  - name: log_audit_event
+    description: "Append to audit log"
+    security: service_role
+    parameters:
+      - name: p_user_id
+        type: uuid
+        required: false
+        description: "Nullable for system operations"
+
+      - name: p_session_id
+        type: uuid
+        required: false
+
+      - name: p_message_id
+        type: uuid
+        required: false
+
+      - name: p_operation_type
+        type: text
+        required: true
+        description: "e.g., USER_CREATED, AI_RESPONSE_GENERATED, SCHEMA_VALIDATION_FAILED"
+
+      - name: p_operation_status
+        type: text
+        required: true
+        description: "Either 'success' or 'failure'"
+
+      - name: p_details
+        type: jsonb
+        required: false
+        default: "{}"
+        description: "Additional context (PII must be masked)"
+
+    returns:
+      type: void
+
+    behavior: |
+      INSERT INTO audit_logs (user_id, session_id, message_id, operation_type, operation_status, details)
+      VALUES (p_user_id, p_session_id, p_message_id, p_operation_type, p_operation_status, p_details);
+
+    usage_note: "Called at every critical operation in workflows"
+
+  - name: insert_dlq_entry
+    description: "Add failed operation to dead letter queue"
+    security: service_role
+    parameters:
+      - name: p_workflow_name
+        type: text
+        required: true
+
+      - name: p_original_data
+        type: jsonb
+        required: true
+        description: "Serialized workflow context for debugging"
+
+      - name: p_failure_reason
+        type: text
+        required: true
+
+      - name: p_retry_attempts
+        type: integer
+        required: true
+
+    returns:
+      type: uuid
+      description: "DLQ entry ID"
+
+    behavior: |
+      INSERT INTO dlq (workflow_name, original_data, failure_reason, retry_attempts)
+      VALUES (p_workflow_name, p_original_data, p_failure_reason, p_retry_attempts)
+      RETURNING id;
+
+    usage_note: "Called by n8n error handler after retry exhaustion"
+
+  - name: delete_user_data
+    description: "Soft delete user and all related data (GDPR compliance)"
+    security: service_role
+    parameters:
+      - name: p_user_id
+        type: uuid
+        required: true
+
+    returns:
+      type: void
+
+    behavior: |
+      -- Soft delete user (cascades via ON DELETE CASCADE to related tables)
+      UPDATE users SET deleted_at = NOW() WHERE id = p_user_id;
+
+      -- Log deletion event (retained even after user deleted)
+      INSERT INTO audit_logs (user_id, operation_type, operation_status, details)
+      VALUES (p_user_id, 'USER_DELETION_REQUESTED', 'success', jsonb_build_object('deleted_at', NOW()));
+
+    usage_note: "Triggered by /delete_my_data command after confirmation"
+
+  - name: get_active_session
+    description: "Get user's current active session (or NULL if none)"
+    security: service_role
+    parameters:
+      - name: p_user_id
+        type: uuid
+        required: true
+
+    returns:
+      type: TABLE(id UUID, session_status TEXT, created_at TIMESTAMPTZ)
+      description: "Active session or empty"
+
+    behavior: |
+      RETURN QUERY
+      SELECT id, session_status, created_at
+      FROM sessions
+      WHERE user_id = p_user_id
+      AND session_status = 'active'
+      ORDER BY created_at DESC
+      LIMIT 1;
+
+    usage_note: "Determines whether to resume session or create new one"
+
+rls_policies:
+  note: "All RPC functions use service_role key, bypassing RLS. RLS policies apply to direct table access only (e.g., via Supabase REST API if exposed)."
+
+  enforcement: "n8n workflows MUST pass correct user_id in every RPC call. RLS is defense-in-depth."
+
+error_codes:
+  - code: "23505"
+    description: "Unique constraint violation (e.g., duplicate telegram_user_id)"
+    handling: "Return NULL or existing record"
+
+  - code: "23503"
+    description: "Foreign key violation (e.g., invalid session_id)"
+    handling: "Raise exception, DLQ"
+
+  - code: "23514"
+    description: "Check constraint violation (e.g., age out of range)"
+    handling: "Raise exception, DLQ"
+
+performance:
+  indexing: "All FK columns indexed; telegram_user_id indexed for fast lookup"
+  connection_pooling: "Supabase handles connection pooling; n8n uses single connection per workflow execution"
+  query_optimization: "Use RETURNING clause to avoid extra SELECT; batch inserts where possible"

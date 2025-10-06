@@ -1,0 +1,178 @@
+# Telegram Bot Commands Contract
+# Defines all supported Telegram commands and their expected behavior
+
+version: "1.0"
+bot_name: "SecondOpinionBot"
+
+commands:
+  - command: /start
+    description: "Initiate new user session and collect consent"
+    parameters: []
+    response_type: "text"
+    workflow: "telegram-intake.json"
+    flow_sequence:
+      - "Telegram webhook receives /start"
+      - "telegram-intake → user-resolve-create sub-workflow"
+      - "If new user: display consent prompt + privacy policy link"
+      - "If consent given: profile-enrich sub-workflow"
+      - "Collect: age, biological_sex, height_cm, weight_kg, medical_history, current_medications"
+      - "Send welcome message with instructions"
+      - "Log audit event: USER_CREATED, CONSENT_GIVEN"
+    expected_response:
+      - "New user: 'Welcome! To get started, I need your consent to process health data. [Accept] [Decline]'"
+      - "Returning user: 'Welcome back! Ready to discuss your health concerns. Send /new to start a consultation.'"
+
+  - command: /new
+    description: "Begin fresh health consultation session"
+    parameters: []
+    response_type: "text"
+    workflow: "telegram-intake.json"
+    flow_sequence:
+      - "Telegram webhook receives /new"
+      - "telegram-intake → create_session RPC"
+      - "Send prompt: 'What health concern would you like to discuss?'"
+      - "User replies with free-text message"
+      - "recommendation-generate workflow triggered"
+    expected_response: "New consultation started. What health concern would you like to discuss today?"
+
+  - command: /profile
+    description: "Display stored user health profile"
+    parameters: []
+    response_type: "text"
+    workflow: "telegram-intake.json"
+    flow_sequence:
+      - "Telegram webhook receives /profile"
+      - "telegram-intake → fetch user_profiles by user_id"
+      - "Mask PII: age (range), height/weight (ranges), medical_history (count), medications (count)"
+      - "Format as readable message"
+      - "Send via response-send sub-workflow"
+    expected_response: |
+      Your Profile:
+      - Age range: 30-40
+      - Height: 170-180 cm
+      - Weight: 70-80 kg
+      - Medical conditions: 2 on file
+      - Current medications: 1 on file
+
+      To update your profile, send /update_profile
+
+  - command: /help
+    description: "Provide usage instructions and available commands"
+    parameters: []
+    response_type: "text"
+    workflow: "telegram-intake.json"
+    flow_sequence:
+      - "Telegram webhook receives /help"
+      - "Send static help text"
+    expected_response: |
+      Second Opinion Bot - Your Health Companion
+
+      Commands:
+      /start - Get started (new users)
+      /new - Start a new consultation
+      /profile - View your health profile
+      /help - Show this help message
+
+      How to use:
+      1. Start with /new to begin a consultation
+      2. Describe your health concern in your own words
+      3. Receive structured recommendations
+
+      ⚠️ Disclaimer: This bot provides informational guidance only. Always consult a qualified healthcare professional for medical advice.
+
+  - command: /delete_my_data
+    description: "Request deletion of all user data (GDPR compliance)"
+    parameters: []
+    response_type: "text"
+    workflow: "telegram-intake.json"
+    flow_sequence:
+      - "Telegram webhook receives /delete_my_data"
+      - "Send confirmation prompt: 'Are you sure? This cannot be undone. [Confirm] [Cancel]'"
+      - "If confirmed: call delete_user_data(user_id) RPC"
+      - "Soft delete: set deleted_at = NOW() on users table (cascade to related tables)"
+      - "Log audit event: USER_DELETION_REQUESTED"
+      - "Send confirmation: 'Your data has been deleted. Goodbye.'"
+    expected_response: "⚠️ Are you sure you want to delete all your data? This action cannot be undone. Reply 'CONFIRM' to proceed."
+
+message_intake:
+  type: "free-form text"
+  description: "User sends health concern as natural language message"
+  workflow: "telegram-intake.json → recommendation-generate.json"
+  flow_sequence:
+    - "Telegram webhook receives text message"
+    - "telegram-intake checks for duplicate (telegram_message_id, telegram_user_id)"
+    - "If duplicate: return cached ai_response"
+    - "If new: insert into messages table"
+    - "recommendation-generate workflow triggered"
+    - "Build prompt from user_profile + message content"
+    - "LLM call via OpenAI node"
+    - "JSON Schema validation (airesponse.v1.schema.json)"
+    - "If valid: persist to ai_responses table"
+    - "If invalid: retry with compressed prompt (max 3 attempts) → DLQ"
+    - "Format response for Telegram (markdown)"
+    - "response-send sub-workflow"
+    - "Log audit event: MESSAGE_RECEIVED, AI_RESPONSE_GENERATED"
+  expected_response: |
+    📋 Summary: [brief overview]
+
+    🚩 Red Flags:
+    - [critical concern 1]
+    - [critical concern 2]
+
+    🥗 Lifestyle:
+    Diet: [recommendations]
+    Exercise: [recommendations]
+    Sleep: [recommendations]
+
+    🛠️ Self-Care:
+    - [action 1]
+    - [action 2]
+
+    👨‍⚕️ Talk to Your Doctor About:
+    - [topic 1]
+    - [topic 2]
+
+    ⏭️ Next Steps:
+    1. [immediate action]
+    2. [follow-up action]
+
+    🔒 Confidence: 85%
+
+    ⚠️ Disclaimer: This is informational guidance only. Always consult a qualified healthcare professional for medical advice, diagnosis, or treatment.
+
+error_handling:
+  workflow_timeout:
+    message: "I'm still processing your request. This is taking longer than expected. Please wait a moment..."
+    delay: 5 seconds after command received
+
+  workflow_failure:
+    message: "I'm sorry, something went wrong. Our team has been notified. Please try again in a few minutes."
+    action: "Log to DLQ, send alert to admin"
+
+  schema_validation_failure:
+    message: "I encountered an issue generating your recommendation. Trying again with a refined approach..."
+    action: "Retry with compressed prompt (max 3 attempts)"
+
+  rate_limiting:
+    message: "You've sent several requests recently. Please wait a moment before sending another."
+    threshold: "5 requests per minute per user"
+
+idempotency:
+  duplicate_detection: "Composite unique index on (telegram_message_id, telegram_user_id)"
+  duplicate_response: "Return cached ai_response from database (no new LLM call)"
+  validation: "Workflow checks messages table before processing"
+
+observability:
+  correlation_ids:
+    - user_id (UUID)
+    - session_id (UUID)
+    - message_id (UUID from messages table)
+    - telegram_message_id (BIGINT from Telegram)
+
+  logged_events:
+    - Command received (command, user_id, timestamp)
+    - Workflow started (workflow_name, correlation_ids)
+    - LLM call (prompt_length, response_length, latency, confidence)
+    - Schema validation (valid/invalid, error_details)
+    - Response sent (message_length, latency)
+    - Error occurred (error_type, retry_attempt, dlq_status)
