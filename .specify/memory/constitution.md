@@ -1,50 +1,42 @@
-# [PROJECT_NAME] Constitution
-<!-- Example: Spec Constitution, TaskFlow Constitution, etc. -->
+<!--
+Sync Impact Report:
+Version change: New constitution (v1.0.0)
+List of modified principles: All principles created from scratch
+Added sections: All sections new
+Removed sections: None (template replaced)
+Templates requiring updates: ✅ plan-template.md references updated
+Follow-up TODOs: None
+-->
 
-## Core Principles
+# Second Opinion Constitution
 
-### [PRINCIPLE_1_NAME]
-<!-- Example: I. Library-First -->
-[PRINCIPLE_1_DESCRIPTION]
-<!-- Example: Every feature starts as a standalone library; Libraries must be self-contained, independently testable, documented; Clear purpose required - no organizational-only libraries -->
+## Основные Принципы
 
-### [PRINCIPLE_2_NAME]
-<!-- Example: II. CLI Interface -->
-[PRINCIPLE_2_DESCRIPTION]
-<!-- Example: Every library exposes functionality via CLI; Text in/out protocol: stdin/args → stdout, errors → stderr; Support JSON + human-readable formats -->
+### I. Backend-First
+Вся бизнес-логика и данные должны находиться в backend (n8n + Supabase). Telegram-бот служит только тонким клиентом для интерфейса. Никакой критически важной логики в клиенте.
 
-### [PRINCIPLE_3_NAME]
-<!-- Example: III. Test-First (NON-NEGOTIABLE) -->
-[PRINCIPLE_3_DESCRIPTION]
-<!-- Example: TDD mandatory: Tests written → User approved → Tests fail → Then implement; Red-Green-Refactor cycle strictly enforced -->
+### II. Медицинская Безопасность (ОБЯЗАТЕЛЬНО)
+ИИ строго запрещено ставить диагнозы или назначать лечение. Каждый ответ ОБЯЗАН содержать дисклеймер о необходимости консультации врача. Системные промпты с ограничениями безопасности обязательны.
 
-### [PRINCIPLE_4_NAME]
-<!-- Example: IV. Integration Testing -->
-[PRINCIPLE_4_DESCRIPTION]
-<!-- Example: Focus areas requiring integration tests: New library contract tests, Contract changes, Inter-service communication, Shared schemas -->
+### III. Test-First (ОБЯЗАТЕЛЬНО)
+TDD обязателен: тесты пишутся → одобряются пользователем → тесты падают → затем реализация. Цикл Red-Green-Refactor строго соблюдается.
 
-### [PRINCIPLE_5_NAME]
-<!-- Example: V. Observability, VI. Versioning & Breaking Changes, VII. Simplicity -->
-[PRINCIPLE_5_DESCRIPTION]
-<!-- Example: Text I/O ensures debuggability; Structured logging required; Or: MAJOR.MINOR.BUILD format; Or: Start simple, YAGNI principles -->
+### IV. Структурированные Данные
+Все данные хранятся в структурированном виде с JSON Schema валидацией. Ответы ИИ должны соответствовать строгой схеме. Версионирование схем обязательно.
 
-## [SECTION_2_NAME]
-<!-- Example: Additional Constraints, Security Requirements, Performance Standards, etc. -->
+### V. Наблюдаемость и Логирование
+Структурированное логирование обязательно. Все операции с ИИ логируются. Корреляционные ID для трассировки запросов. Audit log для всех действий пользователей.
 
-[SECTION_2_CONTENT]
-<!-- Example: Technology stack requirements, compliance standards, deployment policies, etc. -->
+## Требования Безопасности
 
-## [SECTION_3_NAME]
-<!-- Example: Development Workflow, Review Process, Quality Gates, etc. -->
+Обязательная RLS (Row Level Security) в Supabase. Минимальные привилегии доступа. PII не попадает в логи. Согласие пользователя на обработку данных обязательно перед началом работы.
 
-[SECTION_3_CONTENT]
-<!-- Example: Code review requirements, testing gates, deployment approval process, etc. -->
+## Качественные Стандарты
+
+Время ответа ≤20 секунд. Идемпотентность операций через message_id. Ретраи с exponential backoff. JSON Schema валидация всех API ответов.
 
 ## Governance
-<!-- Example: Constitution supersedes all other practices; Amendments require documentation, approval, migration plan -->
 
-[GOVERNANCE_RULES]
-<!-- Example: All PRs/reviews must verify compliance; Complexity must be justified; Use [GUIDANCE_FILE] for runtime development guidance -->
+Конституция главнее всех остальных практик. Изменения требуют документирования, одобрения и плана миграции. Все PR/ревью должны проверять соответствие принципам. Сложность должна быть обоснована.
 
-**Version**: [CONSTITUTION_VERSION] | **Ratified**: [RATIFICATION_DATE] | **Last Amended**: [LAST_AMENDED_DATE]
-<!-- Example: Version: 2.1.1 | Ratified: 2025-06-13 | Last Amended: 2025-07-16 -->
+**Version**: 1.0.0 | **Ratified**: 2025-10-06 | **Last Amended**: 2025-10-06
